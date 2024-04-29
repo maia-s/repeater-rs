@@ -1,5 +1,11 @@
 use proc_macro::{token_stream, Delimiter, Group, Literal, Spacing, TokenStream, TokenTree};
 
+#[derive(Clone, Copy)]
+struct Sigil {
+    char: char,
+    len: usize,
+}
+
 ///
 /// ```rust
 /// # use repeat::repeat;
@@ -44,16 +50,16 @@ pub fn repeat(input: TokenStream) -> TokenStream {
 
     let mut need_colon = false;
 
-    let (sigil, sigil_len) = if let Some(TokenTree::Punct(p)) = next {
+    let sigil = if let Some(TokenTree::Punct(p)) = next {
         need_colon = true;
-        let sigil = p.as_char();
-        let mut count = 1;
+        let char = p.as_char();
+        let mut len = 1;
         next = input.next();
         let mut spacing = p.spacing();
         while spacing == Spacing::Joint {
             if let Some(TokenTree::Punct(ref p2)) = next {
-                if p2.as_char() == sigil {
-                    count += 1;
+                if p2.as_char() == char {
+                    len += 1;
                     spacing = p2.spacing();
                     next = input.next();
                 } else {
@@ -63,9 +69,9 @@ pub fn repeat(input: TokenStream) -> TokenStream {
                 return error("joint spaced punct wasn't followed by punct");
             }
         }
-        (sigil, count)
+        Sigil { char, len }
     } else {
-        ('#', 1)
+        Sigil { char: '#', len: 1 }
     };
 
     let loop_var = if let Some(TokenTree::Ident(ident)) = next {
@@ -110,79 +116,61 @@ pub fn repeat(input: TokenStream) -> TokenStream {
     }
 
     let mut output = TokenStream::new();
-    let mut sigil_buf = Vec::new();
 
-    if let Err(e) = process(
-        &mut output,
-        &mut input,
-        &mut sigil_buf,
-        sigil,
-        sigil_len,
-        &|token, output, input, sigil_buf| {
-            if let TokenTree::Group(group) = &token {
-                if group.delimiter() == Delimiter::Parenthesis {
-                    let delim = input.next();
-                    let Some(TokenTree::Punct(p)) = &delim else {
-                        return Err(
-                            "expected delimiter or `*` after closing parenthesis for loop".into(),
-                        );
+    if let Err(e) = process(&mut output, &mut input, sigil, &|token, output, input| {
+        if let TokenTree::Group(group) = &token {
+            if group.delimiter() == Delimiter::Parenthesis {
+                let delim = input.next();
+                let Some(TokenTree::Punct(p)) = &delim else {
+                    return Err(
+                        "expected delimiter or `*` after closing parenthesis for loop".into(),
+                    );
+                };
+                let delim = if p.as_char() != '*' {
+                    let Some(TokenTree::Punct(p)) = input.next() else {
+                        return Err("expected `*` after loop delimiter".into());
                     };
-                    let delim = if p.as_char() != '*' {
-                        let Some(TokenTree::Punct(p)) = input.next() else {
-                            return Err("expected `*` after loop delimiter".into());
-                        };
-                        if p.as_char() != '*' {
-                            return Err("expected `*` after loop delimiter".into());
-                        }
-                        delim
-                    } else {
-                        None
-                    };
-                    let group = group.stream().into_iter();
-                    for i in 0..repeat_count {
-                        let mut group = group.clone();
-
-                        if i == 0 {
-                        } else if let Some(delim) = &delim {
-                            output.extend([delim.clone()]);
-                        }
-
-                        process(
-                            output,
-                            &mut group,
-                            sigil_buf,
-                            sigil,
-                            sigil_len,
-                            &|token, output, _input, _sigil_buf| {
-                                if let TokenTree::Ident(ident) = token {
-                                    let ident = ident.to_string();
-                                    if Some(&ident) == loop_var.as_ref() {
-                                        output.extend([TokenTree::Literal(
-                                            Literal::usize_unsuffixed(i),
-                                        )]);
-                                    } else {
-                                        return Err(format!("{ident} isn't a loop index"));
-                                    }
-                                } else if let TokenTree::Group(_) = token {
-                                    return Err("can't loop in loop".into());
-                                } else {
-                                    let s =
-                                        String::from(sigil).repeat(sigil_len) + &token.to_string();
-                                    return Err(format!("invalid sigiled token: `{s}`"));
-                                }
-                                Ok(())
-                            },
-                        )?;
+                    if p.as_char() != '*' {
+                        return Err("expected `*` after loop delimiter".into());
                     }
-                    return Ok(());
+                    delim
+                } else {
+                    None
+                };
+                let group = group.stream().into_iter();
+                for i in 0..repeat_count {
+                    let mut group = group.clone();
+
+                    if i == 0 {
+                    } else if let Some(delim) = &delim {
+                        output.extend([delim.clone()]);
+                    }
+
+                    process(output, &mut group, sigil, &|token, output, _input| {
+                        if let TokenTree::Ident(ident) = token {
+                            let ident = ident.to_string();
+                            if Some(&ident) == loop_var.as_ref() {
+                                output.extend([TokenTree::Literal(Literal::usize_unsuffixed(i))]);
+                            } else {
+                                return Err(format!("{ident} isn't a loop index"));
+                            }
+                        } else if let TokenTree::Group(_) = token {
+                            return Err("can't loop in loop".into());
+                        } else {
+                            let s = String::from(sigil.char).repeat(sigil.len) + &token.to_string();
+                            return Err(format!("invalid sigiled token: `{s}`"));
+                        }
+                        Ok(())
+                    })?;
                 }
-            } else if let TokenTree::Ident(_) = token {
-                return Err("can't access loop index outside loop".into());
+                return Ok(());
             }
-            let s = String::from(sigil).repeat(sigil_len) + &token.to_string();
-            Err(format!("invalid sigiled token: `{s}`"))
-        },
-    ) {
+        } else if let TokenTree::Ident(_) = token {
+            return Err("can't access loop index outside loop".into());
+        }
+        let s = String::from(sigil.char).repeat(sigil.len) + &token.to_string();
+        Err(format!("invalid sigiled token: `{s}`"))
+    }) {
         return error(&e);
     }
 
@@ -197,22 +185,15 @@ fn error(s: &str) -> TokenStream {
 fn process(
     output: &mut TokenStream,
     input: &mut token_stream::IntoIter,
-    sigil_buf: &mut Vec<TokenTree>,
-    sigil: char,
-    sigil_len: usize,
-    handle: &impl Fn(
-        TokenTree,
-        &mut TokenStream,
-        &mut token_stream::IntoIter,
-        &mut Vec<TokenTree>,
-    ) -> Result<(), String>,
+    sigil: Sigil,
+    handle: &impl Fn(TokenTree, &mut TokenStream, &mut token_stream::IntoIter) -> Result<(), String>,
 ) -> Result<(), String> {
     let mut accept_sigil = true;
-    sigil_buf.clear();
+    let mut sigil_buf = Vec::with_capacity(sigil.len);
 
     while let Some(token) = input.next() {
         if let TokenTree::Punct(ref p) = token {
-            if accept_sigil && p.as_char() == sigil {
+            if accept_sigil && p.as_char() == sigil.char {
                 accept_sigil = p.spacing() == Spacing::Joint;
                 sigil_buf.push(token);
                 continue;
@@ -220,10 +201,10 @@ fn process(
         }
 
         if !sigil_buf.is_empty() {
-            if sigil_buf.len() == sigil_len {
-                handle(token, output, input, sigil_buf)?;
+            if sigil_buf.len() == sigil.len {
                 sigil_buf.clear();
                 accept_sigil = true;
+                handle(token, output, input)?;
                 continue;
             }
             output.extend(sigil_buf.drain(..));
@@ -232,14 +213,7 @@ fn process(
         if let TokenTree::Group(group) = &token {
             let mut group_output = TokenStream::new();
             let mut input = group.stream().into_iter();
-            process(
-                &mut group_output,
-                &mut input,
-                sigil_buf,
-                sigil,
-                sigil_len,
-                handle,
-            )?;
+            process(&mut group_output, &mut input, sigil, handle)?;
             output.extend([TokenTree::Group(Group::new(
                 group.delimiter(),
                 group_output,
