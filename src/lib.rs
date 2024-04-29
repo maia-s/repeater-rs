@@ -8,38 +8,38 @@ struct Sigil {
 
 ///
 /// ```rust
-/// # use repeat::repeat;
+/// # use repeater::repeat;
 /// let n = repeat!(5 => 0 #( + 1 )*);
 /// assert_eq!(n, 5);
 /// ```
 ///
 /// ```rust
-/// # use repeat::repeat;
+/// # use repeater::repeat;
 /// let n = repeat!(###: 5 => 0 ###( + 1 )*);
 /// assert_eq!(n, 5);
 /// ```
 ///
 /// ```rust
-/// # use repeat::repeat;
+/// # use repeater::repeat;
 /// let n = repeat!(#i: 5 => 0 #(+ #i)*);
 /// assert_eq!(n, 10);
 /// ```
 ///
 /// ```rust
-/// # use repeat::repeat;
+/// # use repeater::repeat;
 /// let n = repeat!(#i: 5 => #(#i)+*);
 /// assert_eq!(n, 10);
 /// ```
 ///
 /// ```rust
-/// # use repeat::repeat;
+/// # use repeater::repeat;
 /// let i = 1;
 /// let n = repeat!(#i: 5 => #( #i + i )+*);
 /// assert_eq!(n, 15);
 /// ```
 ///
 /// ```rust
-/// # use repeat::repeat;
+/// # use repeater::repeat;
 /// let tuple = repeat!(#i: 2 => (#(repeat!(##j: 2 => (##((#i, ##j),)*)),)*));
 /// assert_eq!(tuple, (((0, 0), (0, 1)), ((1, 0), (1, 1))));
 /// ```
