@@ -21,8 +21,14 @@ use proc_macro::{token_stream, Delimiter, Group, Literal, Spacing, TokenStream, 
 ///
 /// ```rust
 /// # use repeat::repeat;
+/// let n = repeat!(#i: 5 => #(#i)+*);
+/// assert_eq!(n, 10);
+/// ```
+///
+/// ```rust
+/// # use repeat::repeat;
 /// let i = 1;
-/// let n = repeat!(#i: 5 => 0 #( + #i + i )*);
+/// let n = repeat!(#i: 5 => #( #i + i )+*);
 /// assert_eq!(n, 15);
 /// ```
 ///
@@ -115,9 +121,31 @@ pub fn repeat(input: TokenStream) -> TokenStream {
         &|token, output, input, sigil_buf| {
             if let TokenTree::Group(group) = &token {
                 if group.delimiter() == Delimiter::Parenthesis {
+                    let delim = input.next();
+                    let Some(TokenTree::Punct(p)) = &delim else {
+                        return Err(
+                            "expected delimiter or `*` after closing parenthesis for loop".into(),
+                        );
+                    };
+                    let delim = if p.as_char() != '*' {
+                        let Some(TokenTree::Punct(p)) = input.next() else {
+                            return Err("expected `*` after loop delimiter".into());
+                        };
+                        if p.as_char() != '*' {
+                            return Err("expected `*` after loop delimiter".into());
+                        }
+                        delim
+                    } else {
+                        None
+                    };
                     let group = group.stream().into_iter();
                     for i in 0..repeat_count {
                         let mut group = group.clone();
+
+                        if i == 0 {
+                        } else if let Some(delim) = &delim {
+                            output.extend([delim.clone()]);
+                        }
 
                         process(
                             output,
@@ -145,12 +173,6 @@ pub fn repeat(input: TokenStream) -> TokenStream {
                                 Ok(())
                             },
                         )?;
-                    }
-                    let Some(TokenTree::Punct(p)) = input.next() else {
-                        return Err("expected `*` after closing parenthesis for loop".into());
-                    };
-                    if p.spacing() != Spacing::Alone || p.as_char() != '*' {
-                        return Err("expected `*` after closing parenthesis for loop".into());
                     }
                     return Ok(());
                 }
