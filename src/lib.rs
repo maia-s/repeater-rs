@@ -1,3 +1,7 @@
+//! # repeater
+//!
+//! This crate provides the [`repeat!`] macro.
+
 use proc_macro::{token_stream, Delimiter, Group, Literal, Spacing, TokenStream, TokenTree};
 
 #[derive(Clone, Copy)]
@@ -33,15 +37,21 @@ struct Sigil {
 ///
 /// ```rust
 /// # use repeater::repeat;
-/// let i = 1;
-/// let n = repeat!(#i: 5 => #( #i + i )+*);
-/// assert_eq!(n, 15);
+/// let i = -1;
+/// let n = repeat!(#i: 5 => [#(#i, i),*]);
+/// assert_eq!(n, [0, -1, 1, -1, 2, -1, 3, -1, 4, -1]);
 /// ```
 ///
 /// ```rust
 /// # use repeater::repeat;
-/// let tuple = repeat!(#i: 2 => (#(repeat!(##j: 2 => (##((#i, ##j),)*)),)*));
+/// let tuple = repeat!(#i: 2 => (#(repeat!(##j: 2 => (##((#i, ##j)),*))),*));
 /// assert_eq!(tuple, (((0, 0), (0, 1)), ((1, 0), (1, 1))));
+/// ```
+///
+/// ```rust
+/// # use repeater::repeat;
+/// let tuple = repeat!(#i: 2 => repeat!(##j: 2 => (#(##((#i, ##j),)*)*)));
+/// assert_eq!(tuple, ((0, 0), (0, 1), (1, 0), (1, 1)));
 /// ```
 #[proc_macro]
 pub fn repeat(input: TokenStream) -> TokenStream {
@@ -221,7 +231,7 @@ fn process(
     let mut sigil_buf = Vec::with_capacity(sigil.len);
 
     while let Some(token) = input.next() {
-        if let TokenTree::Punct(ref p) = token {
+        if let TokenTree::Punct(p) = &token {
             if accept_sigil && p.as_char() == sigil.char {
                 accept_sigil = p.spacing() == Spacing::Joint;
                 sigil_buf.push(token);
@@ -229,10 +239,11 @@ fn process(
             }
         }
 
+        accept_sigil = true;
+
         if !sigil_buf.is_empty() {
             if sigil_buf.len() == sigil.len {
                 sigil_buf.clear();
-                accept_sigil = true;
                 handle(token, output, input)?;
                 continue;
             }
@@ -250,8 +261,6 @@ fn process(
         } else {
             output.extend([token]);
         }
-
-        accept_sigil = true;
     }
 
     Ok(())
