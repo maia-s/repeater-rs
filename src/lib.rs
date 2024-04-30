@@ -45,7 +45,7 @@ struct Sigil {
 /// ```
 #[proc_macro]
 pub fn repeat(input: TokenStream) -> TokenStream {
-    let mut input = input.into_iter();
+    let mut input = ts_iter_fix(input);
     let mut next = input.next();
 
     let mut need_colon = false;
@@ -137,7 +137,7 @@ pub fn repeat(input: TokenStream) -> TokenStream {
                 } else {
                     None
                 };
-                let group = group.stream().into_iter();
+                let group = ts_iter_fix(group.stream());
                 for i in 0..repeat_count {
                     let mut group = group.clone();
 
@@ -182,11 +182,40 @@ fn error(s: &str) -> TokenStream {
     format!("compile_error!({s:?})").parse().unwrap()
 }
 
+fn ts_iter_fix(ts: TokenStream) -> TsIter {
+    TsIter(ts.into_iter())
+}
+
+#[derive(Clone)]
+struct TsIter(token_stream::IntoIter);
+
+impl Iterator for TsIter {
+    type Item = TokenTree;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(flatten_token_tree)
+    }
+}
+
+fn flatten_token_tree(tt: TokenTree) -> TokenTree {
+    if let TokenTree::Group(group) = &tt {
+        if group.delimiter() == Delimiter::None {
+            let mut it = group.stream().into_iter();
+            if let Some(token) = it.next() {
+                if it.next().is_none() {
+                    return flatten_token_tree(token);
+                }
+            }
+        }
+    }
+    tt
+}
+
 fn process(
     output: &mut TokenStream,
-    input: &mut token_stream::IntoIter,
+    input: &mut TsIter,
     sigil: Sigil,
-    handle: &impl Fn(TokenTree, &mut TokenStream, &mut token_stream::IntoIter) -> Result<(), String>,
+    handle: &impl Fn(TokenTree, &mut TokenStream, &mut TsIter) -> Result<(), String>,
 ) -> Result<(), String> {
     let mut accept_sigil = true;
     let mut sigil_buf = Vec::with_capacity(sigil.len);
@@ -212,7 +241,7 @@ fn process(
 
         if let TokenTree::Group(group) = &token {
             let mut group_output = TokenStream::new();
-            let mut input = group.stream().into_iter();
+            let mut input = ts_iter_fix(group.stream());
             process(&mut group_output, &mut input, sigil, handle)?;
             output.extend([TokenTree::Group(Group::new(
                 group.delimiter(),
