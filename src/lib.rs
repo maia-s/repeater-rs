@@ -2,7 +2,8 @@
 //!
 //! This crate provides the [`repeat!`] macro.
 
-use proc_macro::{token_stream, Delimiter, Group, Literal, Spacing, TokenStream, TokenTree};
+use proc_macro::{token_stream, Delimiter, Group, Literal, Spacing, Span, TokenStream, TokenTree};
+use std::borrow::Cow;
 
 #[derive(Clone, Copy)]
 struct Sigil {
@@ -76,7 +77,7 @@ pub fn repeat(input: TokenStream) -> TokenStream {
                     break;
                 }
             } else {
-                return error("joint spaced punct wasn't followed by punct");
+                return Error::new(p.span(), "joint spaced punct wasn't followed by punct").into();
             }
         }
         Sigil { char, len }
@@ -94,35 +95,56 @@ pub fn repeat(input: TokenStream) -> TokenStream {
 
     'colon: {
         if need_colon {
-            if let Some(TokenTree::Punct(p)) = next {
+            if let Some(TokenTree::Punct(p)) = &next {
                 if p.spacing() == Spacing::Alone && p.as_char() == ':' {
                     next = input.next();
                     break 'colon;
                 }
             }
-            return error("expected `:` after sigil/loop variable");
+            return Error::new(
+                next.map(|t| t.span()).unwrap_or_else(Span::call_site),
+                "expected `:` after sigil/loop variable",
+            )
+            .into();
         }
     }
 
-    let Some(TokenTree::Literal(repeat_count)) = next else {
-        return error("expected integer literal as repeat count");
+    let Some(TokenTree::Literal(repeat_count)) = &next else {
+        return Error::new(
+            next.map(|t| t.span()).unwrap_or_else(Span::call_site),
+            "expected integer literal as repeat count",
+        )
+        .into();
     };
     let Ok(repeat_count) = repeat_count.to_string().parse::<usize>() else {
-        return error("expected integer literal as repeat count");
+        return Error::new(
+            next.unwrap().span(),
+            "expected integer literal as repeat count",
+        )
+        .into();
     };
 
-    let Some(TokenTree::Punct(p0)) = input.next() else {
-        return error("expected `=>` after repeat count");
+    next = input.next();
+    let Some(TokenTree::Punct(p0)) = next else {
+        return Error::new(
+            next.map(|t| t.span()).unwrap_or_else(Span::call_site),
+            "expected `=>` after repeat count",
+        )
+        .into();
     };
-    let Some(TokenTree::Punct(p1)) = input.next() else {
-        return error("expected `=>` after repeat count");
+    if p0.spacing() != Spacing::Joint || p0.as_char() != '=' {
+        return Error::new(p0.span(), "expected `=>` after repeat count").into();
+    }
+    next = input.next();
+    let Some(TokenTree::Punct(p1)) = next else {
+        return Error::new(
+            next.map(|t| t.span()).unwrap_or_else(Span::call_site),
+            "expected `=>` after repeat count",
+        )
+        .into();
     };
-    if p0.spacing() != Spacing::Joint
-        || p1.spacing() != Spacing::Alone
-        || p0.as_char() != '='
-        || p1.as_char() != '>'
-    {
-        return error("expected `=>` after repeat count");
+    if p1.spacing() != Spacing::Alone || p1.as_char() != '>' {
+        return Error::new(p1.span(), "expected `=>` after repeat count").into();
     }
 
     let mut output = TokenStream::new();
@@ -132,16 +154,17 @@ pub fn repeat(input: TokenStream) -> TokenStream {
             if group.delimiter() == Delimiter::Parenthesis {
                 let delim = input.next();
                 let Some(TokenTree::Punct(p)) = &delim else {
-                    return Err(
-                        "expected delimiter or `*` after closing parenthesis for loop".into(),
-                    );
+                    return Err(Error::new(
+                        delim.map(|t| t.span()).unwrap_or_else(|| group.span()),
+                        "expected delimiter or `*` after closing parenthesis for loop",
+                    ));
                 };
                 let delim = if p.as_char() != '*' {
                     let Some(TokenTree::Punct(p)) = input.next() else {
-                        return Err("expected `*` after loop delimiter".into());
+                        return Err(Error::new(p.span(), "expected `*` after loop delimiter"));
                     };
                     if p.as_char() != '*' {
-                        return Err("expected `*` after loop delimiter".into());
+                        return Err(Error::new(p.span(), "expected `*` after loop delimiter"));
                     }
                     delim
                 } else {
@@ -158,17 +181,23 @@ pub fn repeat(input: TokenStream) -> TokenStream {
 
                     process(output, &mut group, sigil, &|token, output, _input| {
                         if let TokenTree::Ident(ident) = token {
-                            let ident = ident.to_string();
-                            if Some(&ident) == loop_var.as_ref() {
+                            let ident_s = ident.to_string();
+                            if Some(&ident_s) == loop_var.as_ref() {
                                 output.extend([TokenTree::Literal(Literal::usize_unsuffixed(i))]);
                             } else {
-                                return Err(format!("{ident} isn't a loop index"));
+                                return Err(Error::new(
+                                    ident.span(),
+                                    format!("{ident_s} isn't a loop index"),
+                                ));
                             }
                         } else if let TokenTree::Group(_) = token {
-                            return Err("can't loop in loop".into());
+                            return Err(Error::new(token.span(), "can't loop in loop"));
                         } else {
                             let s = String::from(sigil.char).repeat(sigil.len) + &token.to_string();
-                            return Err(format!("invalid sigiled token: `{s}`"));
+                            return Err(Error::new(
+                                token.span(),
+                                format!("invalid sigiled token: `{s}`"),
+                            ));
                         }
                         Ok(())
                     })?;
@@ -176,20 +205,41 @@ pub fn repeat(input: TokenStream) -> TokenStream {
                 return Ok(());
             }
         } else if let TokenTree::Ident(_) = token {
-            return Err("can't access loop index outside loop".into());
+            return Err(Error::new(
+                token.span(),
+                "can't access loop index outside loop",
+            ));
         }
         let s = String::from(sigil.char).repeat(sigil.len) + &token.to_string();
-        Err(format!("invalid sigiled token: `{s}`"))
+        Err(Error::new(
+            token.span(),
+            format!("invalid sigiled token: `{s}`"),
+        ))
     }) {
-        return error(&e);
+        return e.into();
     }
 
     output
 }
 
-#[must_use]
-fn error(s: &str) -> TokenStream {
-    format!("compile_error!({s:?})").parse().unwrap()
+struct Error(Span, Cow<'static, str>);
+
+impl Error {
+    pub fn new(span: Span, message: impl Into<Cow<'static, str>>) -> Self {
+        Self(span, message.into())
+    }
+}
+
+impl From<Error> for TokenStream {
+    fn from(value: Error) -> Self {
+        let tokens: TokenStream = format!("compile_error!({:?})", value.1).parse().unwrap();
+        let mut ts = TokenStream::new();
+        ts.extend(tokens.into_iter().map(|mut tt| {
+            tt.set_span(value.0);
+            tt
+        }));
+        ts
+    }
 }
 
 fn ts_iter_fix(ts: TokenStream) -> TsIter {
@@ -225,8 +275,8 @@ fn process(
     output: &mut TokenStream,
     input: &mut TsIter,
     sigil: Sigil,
-    handle: &impl Fn(TokenTree, &mut TokenStream, &mut TsIter) -> Result<(), String>,
-) -> Result<(), String> {
+    handle: &impl Fn(TokenTree, &mut TokenStream, &mut TsIter) -> Result<(), Error>,
+) -> Result<(), Error> {
     let mut accept_sigil = true;
     let mut sigil_buf = Vec::with_capacity(sigil.len);
 
