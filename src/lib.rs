@@ -1,6 +1,6 @@
 //! # repeater
 //!
-//! This crate provides the [`repeat!`] macro.
+//! This crate provides the [`repeat!`] macro. See the macro for how to use.
 
 use proc_macro::{token_stream, Delimiter, Group, Literal, Spacing, Span, TokenStream, TokenTree};
 use std::borrow::Cow;
@@ -11,6 +11,8 @@ struct Sigil {
     len: usize,
 }
 
+/// In its simplest form, `repeat` takes a repeat count (an unsigned integer) followed by `=>`
+/// and then the tokens to repeat. Wrap sections to be repeated in `#(` and `)*`.
 ///
 /// ```rust
 /// # use repeater::repeat;
@@ -18,11 +20,42 @@ struct Sigil {
 /// assert_eq!(n, 5);
 /// ```
 ///
+/// You can have as many repeating sections as you want.
+///
+/// ```rust
+/// # use repeater::repeat;
+/// let n = repeat!(5 => 0 #( + 1 )* #( + 1 )*);
+/// assert_eq!(n, 10);
+/// ```
+///
+/// You can't nest loops within a single invocation of `repeat`, but you can nest invocations
+/// for the same effect (see below).
+///
+/// ```compile_fail
+/// # use repeater::repeat;
+/// let n = repeat!(5 => 0 #(#( + 1 )*)*);
+/// ```
+///
+/// You can change the sigil used for repeat commands and variables by specifying it before the
+/// repeat count, followed by a colon.
+///
+/// ```rust
+/// # use repeater::repeat;
+/// let n = repeat!($: 5 => 0 $( + 1 )*);
+/// assert_eq!(n, 5);
+/// ```
+///
+/// You can also change the amount of sigils required.
+///
 /// ```rust
 /// # use repeater::repeat;
 /// let n = repeat!(###: 5 => 0 ###( + 1 )*);
 /// assert_eq!(n, 5);
 /// ```
+///
+/// To get access to a loop variable counting from 0 to the specified repeat count, put its
+/// name before the repeat count, followed by a colon. You can access this variable in repeated
+/// sections using the provided name (including the invocation's sigil).
 ///
 /// ```rust
 /// # use repeater::repeat;
@@ -30,11 +63,16 @@ struct Sigil {
 /// assert_eq!(n, 10);
 /// ```
 ///
+/// The `#(`...`)*` loop syntax accepts a single punctuation token between the `)` and `*` at
+/// the end to insert that token between repeats. The example below expands to `1+2+3+4+5`.
+///
 /// ```rust
 /// # use repeater::repeat;
 /// let n = repeat!(#i: 5 => #(#i)+*);
 /// assert_eq!(n, 10);
 /// ```
+///
+/// Any tokens without the current sigil prefix are inserted as is.
 ///
 /// ```rust
 /// # use repeater::repeat;
@@ -43,16 +81,19 @@ struct Sigil {
 /// assert_eq!(n, [0, -1, 1, -1, 2, -1, 3, -1, 4, -1]);
 /// ```
 ///
-/// ```rust
-/// # use repeater::repeat;
-/// let tuple = repeat!(#i: 2 => (#(repeat!(##j: 2 => (##((#i, ##j)),*))),*));
-/// assert_eq!(tuple, (((0, 0), (0, 1)), ((1, 0), (1, 1))));
-/// ```
+/// Invocations can be nested. By using different prefixes for the different invocations,
+/// you can mix their variables freely.
 ///
 /// ```rust
 /// # use repeater::repeat;
 /// let tuple = repeat!(#i: 2 => repeat!(##j: 2 => (#(##((#i, ##j),)*)*)));
 /// assert_eq!(tuple, ((0, 0), (0, 1), (1, 0), (1, 1)));
+/// ```
+///
+/// ```rust
+/// # use repeater::repeat;
+/// let tuple = repeat!(#i: 2 => (#(repeat!(##j: 2 => (##((#i, ##j)),*))),*));
+/// assert_eq!(tuple, (((0, 0), (0, 1)), ((1, 0), (1, 1))));
 /// ```
 #[proc_macro]
 pub fn repeat(input: TokenStream) -> TokenStream {

@@ -2,6 +2,13 @@
 name = "repeater"
 version = "0.1.0"
 edition = "2021"
+authors = ["Maia S. R."]
+license = "Zlib OR MIT OR Apache-2.0"
+description = "Proc-macro for repeating tokens"
+repository = "https://github.com/maia-s/repeater-rs"
+documentation = "https://docs.rs/repeater"
+keywords = ["proc-macro", "repeat", "tokens"]
+categories = ["development-tools", "rust-patterns"]
 
 [lib]
 proc-macro = true
